@@ -7,8 +7,7 @@ import (
 	Usecases "ShopOps/Usecases"
 
 	swaggerFiles "github.com/swaggo/files"
-    ginSwagger "github.com/swaggo/gin-swagger"
-	
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -36,6 +35,12 @@ func SetupRouter(db *mongo.Database) *gin.Engine {
 	// Initialize services
 	jwtService := Infrastructure.NewJWTService()
 	authMiddleware := Infrastructure.AuthMiddleware(jwtService)
+
+	// Initialize rate limit service
+	rateLimitService := Infrastructure.NewRateLimitService()
+	
+	// Apply general rate limiting to all requests
+	router.Use(rateLimitService.LimitGeneral())
 
 	// Initialize repositories
 	userRepo := Repositories.NewUserRepository(db)
@@ -141,7 +146,12 @@ func SetupRouter(db *mongo.Database) *gin.Engine {
 				reportRoutes.GET("/expenses", reportController.GetExpensesReport)
 				reportRoutes.GET("/profit", reportController.GetProfitReport)
 				reportRoutes.GET("/inventory", reportController.GetInventoryReport)
-				reportRoutes.GET("/export", reportController.ExportReport)
+				
+				// Export endpoint - 10 requests per hour rate limit (ADDED)
+				reportRoutes.GET("/export", 
+					rateLimitService.LimitExports(), 
+					reportController.ExportReport)
+				
 				reportRoutes.GET("/profit/summary", reportController.GetProfitSummary)
 				reportRoutes.GET("/profit/trends", reportController.GetProfitTrends)
 			}
@@ -149,8 +159,15 @@ func SetupRouter(db *mongo.Database) *gin.Engine {
 			// Sync routes
 			syncRoutes := businessSpecific.Group("/sync")
 			{
-				syncRoutes.POST("/batch", syncController.ProcessBatch)
-				syncRoutes.GET("/status", syncController.GetSyncStatus)
+				// Batch endpoint - 1 restore per hour per device (ADDED)
+				syncRoutes.POST("/batch", 
+					rateLimitService.LimitRestore(), 
+					syncController.ProcessBatch)
+				
+				// Status endpoint - 60 requests per minute (ADDED)
+				syncRoutes.GET("/status", 
+					rateLimitService.LimitSync(), 
+					syncController.GetSyncStatus)
 			}
 		}
 	}
